@@ -19,14 +19,11 @@ from homeassistant.util.color import (
     color_temperature_to_rgb,
     color_rgb_to_rgbw,
     color_RGB_to_xy)
-from sunix_ledstrip_controller_client import LEDStripControllerClient
-from sunix_ledstrip_controller_client.controller import Controller
-from sunix_ledstrip_controller_client.functions import FunctionId
 
 _LOGGER = logging.getLogger(__name__)
 
 DEPENDENCIES = []
-REQUIREMENTS = ['sunix-ledstrip-controller-client==1.1.1']
+REQUIREMENTS = ['sunix-ledstrip-controller-client==1.2.0']
 
 CONF_PORT = 'port'
 CONF_CALIBRATION_OFFSET = 'calibration_offset'
@@ -50,6 +47,9 @@ PLATFORM_SCHEMA = vol.Schema({
 
 def setup_platform(hass, config, add_devices, discovery_info=None):
     """Setup the light controller"""
+
+    from sunix_ledstrip_controller_client import LEDStripControllerClient
+    from sunix_ledstrip_controller_client.controller import Controller
 
     # read config
     name = config.get(CONF_NAME, None)
@@ -76,6 +76,9 @@ class ColorMode(Enum):
 
 class SunixController(Light):
     """Representation of a Sunix controller device."""
+
+    from sunix_ledstrip_controller_client import LEDStripControllerClient
+    from sunix_ledstrip_controller_client.controller import Controller
 
     def __init__(self, api: LEDStripControllerClient, device: Controller, name: str, color_offset: [],
                  effect_speed: int):
@@ -127,6 +130,8 @@ class SunixController(Light):
         return calculated_color
 
     def check_args(self, turn_on, **kwargs):
+        from sunix_ledstrip_controller_client.functions import FunctionId
+
         rgb = kwargs.get(ATTR_RGB_COLOR)
         brightness = kwargs.get(ATTR_BRIGHTNESS)
         color_temp = kwargs.get(ATTR_COLOR_TEMP)
