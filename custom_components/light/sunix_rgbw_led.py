@@ -225,6 +225,20 @@ class SunixController(Light):
                 _LOGGER.debug("turning off %s", self._name)
                 self._device.turn_off()
 
+    def try_multiple_times(self, command, max_tries: int = 3):
+        import time
+
+        success = False
+        try_count = 0
+        while (not success) and (try_count < max_tries):
+            try:
+                command()
+                success = True
+            except Exception as e:
+                print("ERROR: %s" % e)
+                time.sleep(0.5)
+                try_count += 1
+
     @property
     def unique_id(self):
         """Return the ID of this light."""
@@ -285,13 +299,19 @@ class SunixController(Light):
     @asyncio.coroutine
     def async_turn_on(self, **kwargs):
         """Turn the light on"""
-        self.check_args(True, **kwargs)
+        self.try_multiple_times(
+            lambda: self.check_args(True, **kwargs)
+        )
 
     @asyncio.coroutine
     def async_turn_off(self, **kwargs):
         """Turn the light off"""
-        self.check_args(False, **kwargs)
+        self.try_multiple_times(
+            lambda: self.check_args(False, **kwargs)
+        )
 
     def update(self):
         """Update the state of this light."""
-        self._device.update_state()
+        self.try_multiple_times(
+            lambda: self._device.update_state()
+        )
