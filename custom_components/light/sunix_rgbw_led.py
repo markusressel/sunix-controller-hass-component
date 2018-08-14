@@ -7,6 +7,7 @@ https://home-assistant.io/components/light.sunix/
 
 import asyncio
 import logging
+from builtins import float
 from enum import Enum
 
 import homeassistant.helpers.config_validation as cv
@@ -24,7 +25,7 @@ from homeassistant.util.color import (
 _LOGGER = logging.getLogger(__name__)
 
 DEPENDENCIES = []
-REQUIREMENTS = ['sunix-ledstrip-controller-client==2.0.0']
+REQUIREMENTS = ['sunix-ledstrip-controller-client==2.0.2']
 
 CONF_DEVICES = 'devices'
 CONF_PORT = 'port'
@@ -53,9 +54,52 @@ PLATFORM_SCHEMA = vol.Schema({
     #    ),
 }, extra=vol.ALLOW_EXTRA)
 
+# retry decorator
+
+import time
+from functools import wraps
+
+
+def retry(exceptions: (), tries: int = 4, delay: int = 3, backoff: float = 2, logger=None):
+    """
+    Retry calling the decorated function using an exponential backoff.
+
+    Args:
+        exceptions: The exception to check. may be a tuple of
+            exceptions to check.
+        tries: Number of times to try (not retry) before giving up.
+        delay: Initial delay between retries in seconds.
+        backoff: Backoff multiplier (e.g. value of 2 will double the delay
+            each retry).
+        logger: Logger to use. If None, print.
+    """
+
+    def deco_retry(f):
+
+        @wraps(f)
+        def f_retry(*args, **kwargs):
+            mtries, mdelay = tries, delay
+            while mtries > 1:
+                try:
+                    return f(*args, **kwargs)
+                except exceptions as e:
+                    msg = '{}, Retrying in {} seconds...'.format(e, mdelay)
+                    if _LOGGER:
+                        _LOGGER.warning(msg)
+                    else:
+                        print(msg)
+                    time.sleep(mdelay)
+                    mtries -= 1
+                    mdelay *= backoff
+            return f(*args, **kwargs)
+
+        return f_retry  # true decorator
+
+    return deco_retry
+
 
 @asyncio.coroutine
-def async_setup_platform(hass, config, async_add_entities, discovery_info=None):
+async def async_setup_platform(hass, config, async_add_entities, discovery_info=None):
     """Setup the light controller"""
 
     # _LOGGER.error("ASYNC_SETUP_PLATFORM")
@@ -64,7 +108,6 @@ def async_setup_platform(hass, config, async_add_entities, discovery_info=None):
         hass.data[DATA_SUNIX] = []
 
     from sunix_ledstrip_controller_client import LEDStripControllerClient
-    from sunix_ledstrip_controller_client.controller import Controller
 
     # read config
     devices = config.get(CONF_DEVICES, None)
@@ -113,13 +156,7 @@ def async_setup_platform(hass, config, async_add_entities, discovery_info=None):
         try:
             api_client = LEDStripControllerClient()
 
-            # _LOGGER.error("ADDING DEVICE: %s:%s" % (host, port))
-
-            # TODO: use auto discovery to get the real hardware id
-            # use fake id for now
-            hardware_id = name
-            # Create api client and device
-            device = Controller(api_client, host, port, hardware_id, None)
+            device = createDevice(api_client, host, port, name)
 
             # skip this device if it's already configured
             if device.get_hardware_id() in [x.unique_id for x in hass.data[DATA_SUNIX]]:
@@ -130,13 +167,28 @@ def async_setup_platform(hass, config, async_add_entities, discovery_info=None):
                 SunixController(device, name, color_offset, color_factor, effect_speed, max_brightness))
 
         except Exception as e:
-            _LOGGER.error("Couldn't add device: %s:%s" % (host, port), e)
+            _LOGGER.error("Couldn't add device: %s:%s - %s" % (host, port, str(e)))
+            _LOGGER.error(e)
 
     async_add_entities(devices_to_add, True)
     # remember in config
     hass.data[DATA_SUNIX].append(devices)
 
     return True
+
+
+@retry(Exception, tries=5, delay=1, backoff=1)
+def createDevice(api_client, host, port, name):
+    from sunix_ledstrip_controller_client.controller import Controller
+
+    # _LOGGER.error("ADDING DEVICE: %s:%s" % (host, port))
+
+    # TODO: use auto discovery to get the real hardware id
+    # use fake id for now
+    hardware_id = name
+    # Create api client and device
+    device = Controller(api_client, host, port, hardware_id, None)
+    return device
 
 
 class ColorMode(Enum):
@@ -347,21 +399,18 @@ class SunixController(Light):
         return self._device.is_on()
 
     @asyncio.coroutine
-    def async_turn_on(self, **kwargs):
+    @retry(Exception, tries=5, delay=1, backoff=1)
+    async def async_turn_on(self, **kwargs):
         """Turn the light on"""
-        self.try_multiple_times(
-            lambda: self.check_args(True, **kwargs)
-        )
+        await self.check_args(True, **kwargs)
 
     @asyncio.coroutine
-    def async_turn_off(self, **kwargs):
+    @retry(Exception, tries=5, delay=1, backoff=1)
+    async def async_turn_off(self, **kwargs):
         """Turn the light off"""
-        self.try_multiple_times(
-            lambda: self.check_args(False, **kwargs)
-        )
+        await self.check_args(False, **kwargs)
 
+    @retry(Exception, tries=5, delay=1, backoff=1)
     def update(self):
         """Update the state of this light."""
-        self.try_multiple_times(
-            lambda: self._device.update_state()
-        )
+        self._device.update_state()
