@@ -402,13 +402,13 @@ class SunixController(Light):
     @retry(Exception, tries=5, delay=1, backoff=1)
     async def async_turn_on(self, **kwargs):
         """Turn the light on"""
-        await self.check_args(True, **kwargs)
+        self.check_args(True, **kwargs)
 
     @asyncio.coroutine
     @retry(Exception, tries=5, delay=1, backoff=1)
     async def async_turn_off(self, **kwargs):
         """Turn the light off"""
-        await self.check_args(False, **kwargs)
+        self.check_args(False, **kwargs)
 
     @retry(Exception, tries=5, delay=1, backoff=1)
     def update(self):
