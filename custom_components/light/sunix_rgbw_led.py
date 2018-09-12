@@ -13,19 +13,15 @@ from enum import Enum
 import homeassistant.helpers.config_validation as cv
 import voluptuous as vol
 from homeassistant.components.light import (
-    ATTR_BRIGHTNESS, ATTR_RGB_COLOR, ATTR_WHITE_VALUE, ATTR_EFFECT, ATTR_COLOR_TEMP, SUPPORT_BRIGHTNESS,
+    ATTR_BRIGHTNESS, ATTR_HS_COLOR, ATTR_RGB_COLOR, ATTR_WHITE_VALUE, ATTR_EFFECT, ATTR_COLOR_TEMP, SUPPORT_BRIGHTNESS,
     SUPPORT_COLOR, SUPPORT_COLOR_TEMP, SUPPORT_EFFECT, SUPPORT_WHITE_VALUE, Light)
 from homeassistant.const import CONF_PLATFORM, CONF_NAME, CONF_HOST
-from homeassistant.util.color import (
-    color_temperature_mired_to_kelvin as mired_to_kelvin,
-    color_temperature_to_rgb,
-    color_rgb_to_rgbw,
-    color_RGB_to_xy)
+import homeassistant.util.color as color_util
 
 _LOGGER = logging.getLogger(__name__)
 
 DEPENDENCIES = []
-REQUIREMENTS = ['sunix-ledstrip-controller-client==2.0.2']
+REQUIREMENTS = ['sunix-ledstrip-controller-client==2.0.3']
 
 CONF_DEVICES = 'devices'
 CONF_PORT = 'port'
@@ -102,8 +98,6 @@ def retry(exceptions: (), tries: int = 4, delay: int = 3, backoff: float = 2, lo
 async def async_setup_platform(hass, config, async_add_entities, discovery_info=None):
     """Setup the light controller"""
 
-    # _LOGGER.error("ASYNC_SETUP_PLATFORM")
-
     if DATA_SUNIX not in hass.data:
         hass.data[DATA_SUNIX] = []
 
@@ -111,6 +105,8 @@ async def async_setup_platform(hass, config, async_add_entities, discovery_info=
 
     # read config
     devices = config.get(CONF_DEVICES, None)
+
+    api_client = LEDStripControllerClient()
 
     devices_to_add = []
     for name, entry in devices.items():
@@ -154,9 +150,7 @@ async def async_setup_platform(hass, config, async_add_entities, discovery_info=
             max_brightness = entry[CONF_MAX_BRIGHTNESS]
 
         try:
-            api_client = LEDStripControllerClient()
-
-            device = createDevice(api_client, host, port, name)
+            device = create_device(api_client, host, port, name)
 
             # skip this device if it's already configured
             if device.get_hardware_id() in [x.unique_id for x in hass.data[DATA_SUNIX]]:
@@ -178,10 +172,10 @@ async def async_setup_platform(hass, config, async_add_entities, discovery_info=
 
 
 @retry(Exception, tries=5, delay=1, backoff=1)
-def createDevice(api_client, host, port, name):
+def create_device(api_client, host, port, name):
     from sunix_ledstrip_controller_client.controller import Controller
 
-    # _LOGGER.error("ADDING DEVICE: %s:%s" % (host, port))
+    # _LOGGER.debug("ADDING DEVICE: %s:%s" % (host, port))
 
     # TODO: use auto discovery to get the real hardware id
     # use fake id for now
@@ -205,37 +199,33 @@ class SunixController(Light):
     def __init__(self, device: Controller, name: str, color_offset: [int, int, int, int, int],
                  color_factor: [float, float, float, float, float],
                  effect_speed: int, max_brightness: int):
-        self._name = name
-        self._device = device
+        self._name: str = name
+        self._device: Controller = device
 
-        self._rgb = [255, 255, 255]  # initial color
-        self._brightness = device.get_brightness()  # initial brightness
-        self._color_temp = 154  # initial color temp (most blueish)
-        self._effect = None
+        self._rgb: tuple[int, int, int] = [255, 255, 255]  # initial color
+        self._brightness: int = device.get_brightness()  # initial brightness
+        self._color_temp: int = 154  # initial color temp (most blueish)
+        self._effect: str = None
         # self._effect = self._device.get_effect()
-        self._effect_speed = effect_speed
-        self._max_brightness = max_brightness
-        self._color_mode = ColorMode.RGB  # rgb color
-        self._color_offset = color_offset  # calibration offset
-        self._color_factor = color_factor  # calibration color channel factor
-
-        # _LOGGER.error("INIT Name: %s, Host: %s, Port: %s (
-        #    self._name, self._device.get_host(), self._device.get_port()))
+        self._effect_speed: int = effect_speed
+        self._max_brightness: int = max_brightness
+        self._use_custom_white_value: bool = False
+        self._custom_white_value: int = None
+        self._color_mode: ColorMode = ColorMode.RGB  # rgb color
+        self._color_offset: float = color_offset  # calibration offset
+        self._color_factor: float = color_factor  # calibration color channel factor
 
     def get_rgbww_with_brightness(self, rgb) -> [int, int, int, int, int]:
         """
         Converts an RGB color (3ch) to a RGBWWCW color (5ch)
-        and applies calibration offset, color factors and brightness
+        and applies calibration offset, color factors, brightness
+        and calculates the white value if there it is not provided
         :param rgb: 3 channel RGB color
         :return: 5 channel RGBWWCW color
         """
 
-        _LOGGER.debug("rgb: %s", rgb)
-
         if self._color_mode == ColorMode.COLOR_TEMPERATURE:  # color temperature
-            _LOGGER.debug("temp: %s", self._color_temp)
-            rgb = color_temperature_to_rgb(mired_to_kelvin(self._color_temp))
-            _LOGGER.debug("rgb color_temp: %s", rgb)
+            rgb = color_util.color_temperature_to_rgb(color_util.color_temperature_mired_to_kelvin(self._color_temp))
 
             # apply color offset if any
             if self._color_offset:
@@ -244,9 +234,12 @@ class SunixController(Light):
                     min(rgb[1] + self._color_offset[1], 255),
                     min(rgb[2] + self._color_offset[2], 255)
                 ]
-                _LOGGER.debug("rgb after offset: %s", rgb)
 
-            rgbwwcw = list(color_rgb_to_rgbw(rgb[0], rgb[1], rgb[2]))
+            if self._use_custom_white_value:
+                rgbwwcw = [rgb[0], rgb[1], rgb[2], self._custom_white_value]
+            else:
+                rgbwwcw = list(color_util.color_rgb_to_rgbw(rgb[0], rgb[1], rgb[2]))
+
             rgbwwcw.append(rgbwwcw[3])  # duplicate warm_white value for cold_white
 
             # apply color factors
@@ -260,52 +253,83 @@ class SunixController(Light):
                 rgbwwcw = color_factors_included
 
         else:
-            rgbwwcw = list(color_rgb_to_rgbw(rgb[0], rgb[1], rgb[2]))
+            if self._use_custom_white_value:
+                rgbwwcw = [rgb[0], rgb[1], rgb[2], self._custom_white_value]
+            else:
+                rgbwwcw = list(color_util.color_rgb_to_rgbw(rgb[0], rgb[1], rgb[2]))
             rgbwwcw.append(rgbwwcw[3])  # duplicate warm_white value for cold_white
-
-        # _LOGGER.debug("RGBWW: %s", rgbwwcw)
 
         # calculate color based on brightness since
         # the controller doesn't support brightness natively
-
-        brightness_included = []
-        for color in rgbwwcw:
-            brightness_included.append(int(
-                color *
-                (self._brightness * (self._max_brightness / 255) / 255)
-            ))
-
-        _LOGGER.debug("RGBWWCW after Brightness: %s", brightness_included)
+        brightness_included = self.apply_brightness_to_color(rgbwwcw)
 
         return brightness_included
 
+    def apply_brightness_to_color(self, color: ()) -> ():
+        """
+        Applies a brightness factor to a given color and returns the modified version.
+        Note that this method is not idempotent if the brightness is a value other than 0 or 255
+        :param color: the color to apply the brightness to
+        :return: a color with the applied brightness
+        """
+
+        brightness_included = []
+        for color_channel in color:
+            brightness_included.append(int(
+                color_channel *
+                (self._brightness * (self._max_brightness / 255) / 255)
+            ))
+
+        return tuple(brightness_included)
+
     def check_args(self, turn_on, **kwargs):
+        """
+        Analyzes the arguments coming from hass and creates a new state from it
+
+        :param turn_on: True, if this is called in "turn_on" method, false otherwise
+        :param kwargs: Argumtns passed in from hass
+        """
         from sunix_ledstrip_controller_client import FunctionId
 
-        rgb = kwargs.get(ATTR_RGB_COLOR)
+        hs_color = kwargs.get(ATTR_HS_COLOR)
+        rgb = color_util.color_hs_to_RGB(*hs_color) if hs_color else kwargs.get(ATTR_RGB_COLOR)
         white_value = kwargs.get(ATTR_WHITE_VALUE)
         brightness = kwargs.get(ATTR_BRIGHTNESS)
         color_temp = kwargs.get(ATTR_COLOR_TEMP)
         effect = kwargs.get(ATTR_EFFECT)
 
-        if rgb:
-            _LOGGER.debug("rgb: %s", rgb)
-            self._rgb = rgb
-            self._color_mode = ColorMode.RGB
-        elif color_temp:
-            _LOGGER.error("color_temp: %s", color_temp)
-            self._color_temp = color_temp
-            self._color_mode = ColorMode.COLOR_TEMPERATURE
-        elif effect:
-            _LOGGER.debug("effect: %s", effect)
-            self._effect = effect
-            self._color_mode = ColorMode.EFFECT
+        # check for new custom white value
+        if white_value is not None:
+            self._use_custom_white_value = True
+            self._custom_white_value = white_value
 
-        _LOGGER.debug("color_mode: %s", self._color_mode)
-
-        if brightness:
-            _LOGGER.debug("brightness: %s", brightness)
+        # check for new brightness value
+        if brightness is not None:
+            _LOGGER.debug("Brightness Input: %s", brightness)
             self._brightness = brightness
+
+        # check if the user selected a specific color on the palette
+        if rgb is not None:
+            _LOGGER.debug("RGB Color Input: %s", rgb)
+            self._color_mode = ColorMode.RGB
+            self._rgb = rgb
+
+        # or if the user selected a color temperature
+        elif color_temp is not None:
+            _LOGGER.debug("Color Temperature Input: %s", color_temp)
+            self._color_mode = ColorMode.COLOR_TEMPERATURE
+            # disable custom white value in color temperature mode
+            # (could allow both, include ww automatically or allow custom control of ww
+            # even when selecting a color temperature)
+            self._color_temp = color_temp
+            self._use_custom_white_value = False
+
+        # or if the user activated an effect
+        # note: the white value is unaffected by the selection of an effect
+        elif effect is not None:
+            _LOGGER.debug("Effect Input: %s", effect)
+            self._color_mode = ColorMode.EFFECT
+            self._effect = effect
 
         if self._color_mode != ColorMode.EFFECT:
             c = self.get_rgbww_with_brightness(self._rgb)
@@ -323,23 +347,6 @@ class SunixController(Light):
             if self.is_on:
                 _LOGGER.debug("turning off %s", self._name)
                 self._device.turn_off()
-
-    def try_multiple_times(self, command: callable, max_tries: int = 3):
-        import time
-
-        success = False
-        try_count = 0
-        while (not success) and (try_count < max_tries):
-            try:
-                command()
-                success = True
-            except Exception as e:
-                _LOGGER.warning("Error executing command: %s", e)
-                time.sleep(0.5)
-                try_count += 1
-
-        if not success:
-            _LOGGER.error("Couldn't execute command even after %s retries", max_tries)
 
     @property
     def unique_id(self):
@@ -359,7 +366,7 @@ class SunixController(Light):
     @property
     def xy_color(self):
         """Return the XY color value [float, float]."""
-        return color_RGB_to_xy(self._rgb[0], self._rgb[1], self._rgb[2])
+        return color_util.color_RGB_to_xy(self._rgb[0], self._rgb[1], self._rgb[2])
 
     @property
     def rgb_color(self):
