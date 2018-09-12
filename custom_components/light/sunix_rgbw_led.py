@@ -287,6 +287,7 @@ class SunixController(Light):
 
         return tuple(brightness_included)
 
+    @retry(tries=5, delay=0, backoff=1)
     def check_args(self, turn_on, **kwargs):
         """
         Analyzes the arguments coming from hass and creates a new state from it
@@ -354,6 +355,10 @@ class SunixController(Light):
                 _LOGGER.debug("turning off %s", self._name)
                 self._device.turn_off()
 
+    @retry(tries=5, delay=0, backoff=1)
+    def _update_controller_state(self):
+        self._device.update_state()
+
     @property
     def unique_id(self):
         """Return the ID of this light."""
@@ -412,13 +417,11 @@ class SunixController(Light):
         return self._device.is_on()
 
     @asyncio.coroutine
-    @retry(tries=5, delay=0, backoff=1)
     async def async_turn_on(self, **kwargs):
         """Turn the light on"""
         self.check_args(True, **kwargs)
 
     @asyncio.coroutine
-    @retry(tries=5, delay=0, backoff=1)
     async def async_turn_off(self, **kwargs):
         """Turn the light off"""
         self.check_args(False, **kwargs)
@@ -426,4 +429,4 @@ class SunixController(Light):
     @retry(tries=5, delay=0, backoff=1)
     def update(self):
         """Update the state of this light."""
-        self._device.update_state()
+        self._update_controller_state()
