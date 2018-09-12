@@ -56,7 +56,7 @@ import time
 from functools import wraps
 
 
-def retry(exceptions: (), tries: int = 4, delay: int = 3, backoff: float = 2, logger=None):
+def retry(tries: int = 4, delay: int = 3, backoff: float = 2, logger=None):
     """
     Retry calling the decorated function using an exponential backoff.
 
@@ -70,15 +70,20 @@ def retry(exceptions: (), tries: int = 4, delay: int = 3, backoff: float = 2, lo
         logger: Logger to use. If None, print.
     """
 
+    import sys
+
     def deco_retry(f):
 
         @wraps(f)
         def f_retry(*args, **kwargs):
             mtries, mdelay = tries, delay
             while mtries > 1:
+                # noinspection PyBroadException
                 try:
                     return f(*args, **kwargs)
-                except exceptions as e:
+                except:
+                    e = sys.exc_info()[0]
+
                     msg = '{}, Retrying in {} seconds...'.format(e, mdelay)
                     if _LOGGER:
                         _LOGGER.warning(msg)
@@ -171,7 +176,7 @@ async def async_setup_platform(hass, config, async_add_entities, discovery_info=
     return True
 
 
-@retry(Exception, tries=5, delay=1, backoff=1)
+@retry(tries=5, delay=1, backoff=1)
 def create_device(api_client, host, port, name):
     from sunix_ledstrip_controller_client.controller import Controller
 
@@ -331,12 +336,13 @@ class SunixController(Light):
             self._color_mode = ColorMode.EFFECT
             self._effect = effect
 
+        c = self.get_rgbww_with_brightness(self._rgb)
         if self._color_mode != ColorMode.EFFECT:
-            c = self.get_rgbww_with_brightness(self._rgb)
             _LOGGER.debug("setting color %s on %s", c, self._name)
             self._device.set_rgbww(c[0], c[1], c[2], c[3], c[4])
         else:
             _LOGGER.debug("setting function %s on %s", self._effect, self._name)
+            self._device.set_ww(c[3], c[4])
             self._device.set_function(FunctionId[self._effect], self._effect_speed)
 
         if turn_on:
@@ -406,18 +412,18 @@ class SunixController(Light):
         return self._device.is_on()
 
     @asyncio.coroutine
-    @retry(Exception, tries=5, delay=1, backoff=1)
+    @retry(tries=5, delay=0, backoff=1)
     async def async_turn_on(self, **kwargs):
         """Turn the light on"""
         self.check_args(True, **kwargs)
 
     @asyncio.coroutine
-    @retry(Exception, tries=5, delay=1, backoff=1)
+    @retry(tries=5, delay=0, backoff=1)
     async def async_turn_off(self, **kwargs):
         """Turn the light off"""
         self.check_args(False, **kwargs)
 
-    @retry(Exception, tries=5, delay=1, backoff=1)
+    @retry(tries=5, delay=0, backoff=1)
     def update(self):
         """Update the state of this light."""
         self._device.update_state()
