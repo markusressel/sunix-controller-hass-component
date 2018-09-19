@@ -1,4 +1,4 @@
-# ha-sunix-controller
+# sunix-controller-hass-component
 Home Assistant custom component for the Sunix WiFi RGBW controller
 
 # Configuration (yaml)
