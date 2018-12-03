@@ -1,6 +1,8 @@
 # sunix-controller-hass-component
 Home Assistant custom component for the Sunix WiFi RGBW controller
 
+This component relies on the [sunix-ledstrip-controller-client](https://github.com/markusressel/sunix-ledstrip-controller-client) library.
+
 # Configuration (yaml)
 
 ```
